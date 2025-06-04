@@ -2,10 +2,12 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTransactions } from '../context/TransactionContext';
 import { Wallet } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 const WelcomePage: React.FC = () => {
   const navigate = useNavigate();
   const { addAccount } = useTransactions();
+  const { user } = useAuth();
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
     name: '',
@@ -14,7 +16,7 @@ const WelcomePage: React.FC = () => {
     initialBalance: ''
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (step < 4) {
@@ -22,16 +24,20 @@ const WelcomePage: React.FC = () => {
       return;
     }
 
-    // Create initial account with balance
-    addAccount({
-      name: 'Main Account',
-      balance: parseFloat(formData.initialBalance),
-      type: 'personal',
-      color: '#3B82F6'
-    });
+    try {
+      // Create initial account with balance
+      await addAccount({
+        name: 'Main Account',
+        balance: parseFloat(formData.initialBalance),
+        type: 'personal',
+        color: '#3B82F6'
+      });
 
-    // Navigate to dashboard
-    navigate('/');
+      // Navigate to dashboard
+      navigate('/');
+    } catch (error) {
+      console.error('Error creating initial account:', error);
+    }
   };
 
   const renderStep = () => {
@@ -106,6 +112,11 @@ const WelcomePage: React.FC = () => {
         return null;
     }
   };
+
+  if (!user) {
+    navigate('/login');
+    return null;
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">

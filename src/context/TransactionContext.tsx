@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
 import { Transaction, Account, FinancialSummary, RecurringIncome } from '../types';
 import { startOfMonth, endOfMonth, isWithinInterval, addMonths } from 'date-fns';
+import { supabase } from '../lib/supabase';
+import { useAuth } from './AuthContext';
 
 interface TransactionState {
   transactions: Transaction[];
@@ -22,7 +24,8 @@ type TransactionAction =
   | { type: 'UPDATE_SUMMARY'; payload: FinancialSummary }
   | { type: 'ADD_RECURRING_INCOME'; payload: RecurringIncome }
   | { type: 'UPDATE_RECURRING_INCOME'; payload: RecurringIncome }
-  | { type: 'DELETE_RECURRING_INCOME'; payload: string };
+  | { type: 'DELETE_RECURRING_INCOME'; payload: string }
+  | { type: 'SET_RECURRING_INCOME'; payload: RecurringIncome[] };
 
 const defaultState: TransactionState = {
   transactions: [],
@@ -41,27 +44,27 @@ const defaultState: TransactionState = {
 const TransactionContext = createContext<{
   state: TransactionState;
   dispatch: React.Dispatch<TransactionAction>;
-  addTransaction: (transaction: Omit<Transaction, 'id'>) => void;
-  deleteTransaction: (id: string) => void;
-  addAccount: (account: Omit<Account, 'id'>) => void;
+  addTransaction: (transaction: Omit<Transaction, 'id'>) => Promise<void>;
+  deleteTransaction: (id: string) => Promise<void>;
+  addAccount: (account: Omit<Account, 'id'>) => Promise<void>;
   getCurrentBalance: () => number;
   getActiveAccount: () => Account | undefined;
   calculateMonthlySummary: () => void;
-  addRecurringIncome: (income: Omit<RecurringIncome, 'id'>) => void;
-  updateRecurringIncome: (income: RecurringIncome) => void;
-  deleteRecurringIncome: (id: string) => void;
+  addRecurringIncome: (income: Omit<RecurringIncome, 'id'>) => Promise<void>;
+  updateRecurringIncome: (income: RecurringIncome) => Promise<void>;
+  deleteRecurringIncome: (id: string) => Promise<void>;
 }>({
   state: defaultState,
   dispatch: () => null,
-  addTransaction: () => null,
-  deleteTransaction: () => null,
-  addAccount: () => null,
+  addTransaction: async () => {},
+  deleteTransaction: async () => {},
+  addAccount: async () => {},
   getCurrentBalance: () => 0,
   getActiveAccount: () => undefined,
   calculateMonthlySummary: () => null,
-  addRecurringIncome: () => null,
-  updateRecurringIncome: () => null,
-  deleteRecurringIncome: () => null,
+  addRecurringIncome: async () => {},
+  updateRecurringIncome: async () => {},
+  deleteRecurringIncome: async () => {},
 });
 
 function transactionReducer(state: TransactionState, action: TransactionAction): TransactionState {
@@ -129,6 +132,11 @@ function transactionReducer(state: TransactionState, action: TransactionAction):
         ...state,
         recurringIncome: state.recurringIncome.filter((income) => income.id !== action.payload),
       };
+    case 'SET_RECURRING_INCOME':
+      return {
+        ...state,
+        recurringIncome: action.payload,
+      };
     default:
       return state;
   }
@@ -136,57 +144,58 @@ function transactionReducer(state: TransactionState, action: TransactionAction):
 
 export const TransactionProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, dispatch] = useReducer(transactionReducer, defaultState);
+  const { user } = useAuth();
 
-  // Initialize with sample data if none exists
+  // Load data from Supabase when component mounts
   useEffect(() => {
-    const storedTransactions = localStorage.getItem('transactions');
-    const storedAccounts = localStorage.getItem('accounts');
-    const storedRecurringIncome = localStorage.getItem('recurringIncome');
+    if (!user) return;
 
-    if (storedAccounts) {
-      dispatch({ type: 'SET_ACCOUNTS', payload: JSON.parse(storedAccounts) });
-    } else {
-      // Create a default account
-      const defaultAccount: Account = {
-        id: generateId(),
-        name: 'Main Account',
-        balance: 75000,
-        type: 'personal',
-        color: '#3B82F6',
-      };
-      dispatch({ type: 'SET_ACCOUNTS', payload: [defaultAccount] });
-      localStorage.setItem('accounts', JSON.stringify([defaultAccount]));
-    }
+    const loadData = async () => {
+      try {
+        // Fetch accounts
+        const { data: accounts, error: accountsError } = await supabase
+          .from('accounts')
+          .select('*')
+          .eq('user_id', user.id);
 
-    if (storedTransactions) {
-      dispatch({ type: 'SET_TRANSACTIONS', payload: JSON.parse(storedTransactions) });
-    } else {
-      dispatch({ type: 'SET_TRANSACTIONS', payload: [] });
-    }
+        if (accountsError) throw accountsError;
+        if (accounts) dispatch({ type: 'SET_ACCOUNTS', payload: accounts });
 
-    if (storedRecurringIncome) {
-      const recurringIncome = JSON.parse(storedRecurringIncome);
-      dispatch({ type: 'SET_RECURRING_INCOME', payload: recurringIncome });
-    }
-  }, []);
+        // Fetch transactions
+        const { data: transactions, error: transactionsError } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('user_id', user.id);
 
-  // Update local storage when data changes
-  useEffect(() => {
-    if (!state.isLoading) {
-      localStorage.setItem('transactions', JSON.stringify(state.transactions));
-      localStorage.setItem('accounts', JSON.stringify(state.accounts));
-      localStorage.setItem('recurringIncome', JSON.stringify(state.recurringIncome));
-      calculateMonthlySummary();
-    }
-  }, [state.transactions, state.accounts, state.recurringIncome, state.isLoading]);
+        if (transactionsError) throw transactionsError;
+        if (transactions) dispatch({ type: 'SET_TRANSACTIONS', payload: transactions });
+
+        // Fetch recurring income
+        const { data: recurringIncome, error: recurringIncomeError } = await supabase
+          .from('recurring_income')
+          .select('*')
+          .eq('user_id', user.id);
+
+        if (recurringIncomeError) throw recurringIncomeError;
+        if (recurringIncome) dispatch({ type: 'SET_RECURRING_INCOME', payload: recurringIncome });
+
+      } catch (error) {
+        console.error('Error loading data:', error);
+      }
+    };
+
+    loadData();
+  }, [user]);
 
   // Process recurring income
   useEffect(() => {
+    if (!user) return;
+
     const now = new Date();
     const currentMonth = startOfMonth(now);
     const nextMonth = endOfMonth(addMonths(currentMonth, 1));
 
-    state.recurringIncome.forEach((income) => {
+    state.recurringIncome.forEach(async (income) => {
       const lastProcessedDate = new Date(income.lastProcessed || '2000-01-01');
       
       if (lastProcessedDate < currentMonth) {
@@ -196,7 +205,7 @@ export const TransactionProvider: React.FC<{ children: React.ReactNode }> = ({ c
           const dueDate = new Date(processMonth.getFullYear(), processMonth.getMonth(), income.dayOfMonth);
           
           if (dueDate <= now) {
-            addTransaction({
+            await addTransaction({
               type: 'income',
               amount: income.amount,
               description: income.description,
@@ -211,66 +220,116 @@ export const TransactionProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
         
         // Update last processed date
-        updateRecurringIncome({
+        await updateRecurringIncome({
           ...income,
           lastProcessed: now.toISOString(),
         });
       }
     });
-  }, [state.recurringIncome]);
+  }, [state.recurringIncome, user]);
 
-  const generateId = () => {
-    return Math.random().toString(36).substring(2, 15);
-  };
+  const addTransaction = async (transaction: Omit<Transaction, 'id'>) => {
+    if (!user) return;
 
-  const addTransaction = (transaction: Omit<Transaction, 'id'>) => {
-    const newTransaction: Transaction = {
-      ...transaction,
-      id: generateId(),
-      accountId: state.activeAccountId,
-      date: transaction.date || new Date().toISOString(),
-    };
+    try {
+      const { data, error } = await supabase
+        .from('transactions')
+        .insert([{
+          ...transaction,
+          user_id: user.id,
+        }])
+        .select()
+        .single();
 
-    // Update account balance
-    const account = state.accounts.find((a) => a.id === state.activeAccountId);
-    if (account) {
-      const newBalance =
-        transaction.type === 'income'
-          ? account.balance + transaction.amount
-          : account.balance - transaction.amount;
+      if (error) throw error;
+      if (data) {
+        dispatch({ type: 'ADD_TRANSACTION', payload: data });
 
-      const updatedAccount: Account = { ...account, balance: newBalance };
-      dispatch({ type: 'UPDATE_ACCOUNT', payload: updatedAccount });
+        // Update account balance
+        const account = state.accounts.find((a) => a.id === transaction.accountId);
+        if (account) {
+          const newBalance =
+            transaction.type === 'income'
+              ? account.balance + transaction.amount
+              : account.balance - transaction.amount;
+
+          await updateAccount({ ...account, balance: newBalance });
+        }
+      }
+    } catch (error) {
+      console.error('Error adding transaction:', error);
     }
-
-    dispatch({ type: 'ADD_TRANSACTION', payload: newTransaction });
   };
 
-  const deleteTransaction = (id: string) => {
-    const transaction = state.transactions.find((t) => t.id === id);
-    if (!transaction) return;
+  const deleteTransaction = async (id: string) => {
+    if (!user) return;
 
-    // Revert account balance
-    const account = state.accounts.find((a) => a.id === transaction.accountId);
-    if (account) {
-      const newBalance =
-        transaction.type === 'income'
-          ? account.balance - transaction.amount
-          : account.balance + transaction.amount;
+    try {
+      const transaction = state.transactions.find((t) => t.id === id);
+      if (!transaction) return;
 
-      const updatedAccount: Account = { ...account, balance: newBalance };
-      dispatch({ type: 'UPDATE_ACCOUNT', payload: updatedAccount });
+      const { error } = await supabase
+        .from('transactions')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+
+      dispatch({ type: 'DELETE_TRANSACTION', payload: id });
+
+      // Revert account balance
+      const account = state.accounts.find((a) => a.id === transaction.accountId);
+      if (account) {
+        const newBalance =
+          transaction.type === 'income'
+            ? account.balance - transaction.amount
+            : account.balance + transaction.amount;
+
+        await updateAccount({ ...account, balance: newBalance });
+      }
+    } catch (error) {
+      console.error('Error deleting transaction:', error);
     }
-
-    dispatch({ type: 'DELETE_TRANSACTION', payload: id });
   };
 
-  const addAccount = (account: Omit<Account, 'id'>) => {
-    const newAccount: Account = {
-      ...account,
-      id: generateId(),
-    };
-    dispatch({ type: 'ADD_ACCOUNT', payload: newAccount });
+  const addAccount = async (account: Omit<Account, 'id'>) => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('accounts')
+        .insert([{
+          ...account,
+          user_id: user.id,
+        }])
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (data) {
+        dispatch({ type: 'ADD_ACCOUNT', payload: data });
+      }
+    } catch (error) {
+      console.error('Error adding account:', error);
+    }
+  };
+
+  const updateAccount = async (account: Account) => {
+    if (!user) return;
+
+    try {
+      const { error } = await supabase
+        .from('accounts')
+        .update(account)
+        .eq('id', account.id)
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+      dispatch({ type: 'UPDATE_ACCOUNT', payload: account });
+    } catch (error) {
+      console.error('Error updating account:', error);
+    }
   };
 
   const getCurrentBalance = () => {
@@ -315,20 +374,60 @@ export const TransactionProvider: React.FC<{ children: React.ReactNode }> = ({ c
     });
   };
 
-  const addRecurringIncome = (income: Omit<RecurringIncome, 'id'>) => {
-    const newIncome: RecurringIncome = {
-      ...income,
-      id: generateId(),
-    };
-    dispatch({ type: 'ADD_RECURRING_INCOME', payload: newIncome });
+  const addRecurringIncome = async (income: Omit<RecurringIncome, 'id'>) => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('recurring_income')
+        .insert([{
+          ...income,
+          user_id: user.id,
+        }])
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (data) {
+        dispatch({ type: 'ADD_RECURRING_INCOME', payload: data });
+      }
+    } catch (error) {
+      console.error('Error adding recurring income:', error);
+    }
   };
 
-  const updateRecurringIncome = (income: RecurringIncome) => {
-    dispatch({ type: 'UPDATE_RECURRING_INCOME', payload: income });
+  const updateRecurringIncome = async (income: RecurringIncome) => {
+    if (!user) return;
+
+    try {
+      const { error } = await supabase
+        .from('recurring_income')
+        .update(income)
+        .eq('id', income.id)
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+      dispatch({ type: 'UPDATE_RECURRING_INCOME', payload: income });
+    } catch (error) {
+      console.error('Error updating recurring income:', error);
+    }
   };
 
-  const deleteRecurringIncome = (id: string) => {
-    dispatch({ type: 'DELETE_RECURRING_INCOME', payload: id });
+  const deleteRecurringIncome = async (id: string) => {
+    if (!user) return;
+
+    try {
+      const { error } = await supabase
+        .from('recurring_income')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+      dispatch({ type: 'DELETE_RECURRING_INCOME', payload: id });
+    } catch (error) {
+      console.error('Error deleting recurring income:', error);
+    }
   };
 
   return (
