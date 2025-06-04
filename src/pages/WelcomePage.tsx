@@ -2,12 +2,10 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTransactions } from '../context/TransactionContext';
 import { Wallet } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
 
 const WelcomePage: React.FC = () => {
   const navigate = useNavigate();
   const { addAccount } = useTransactions();
-  const { user } = useAuth();
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
     name: '',
@@ -112,11 +110,6 @@ const WelcomePage: React.FC = () => {
         return null;
     }
   };
-
-  if (!user) {
-    navigate('/login');
-    return null;
-  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">

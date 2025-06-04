@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import AppLayout from './components/Layout/AppLayout';
 import Dashboard from './pages/Dashboard';
 import TransactionsPage from './pages/TransactionsPage';
@@ -9,21 +9,6 @@ import WelcomePage from './pages/WelcomePage';
 import { TransactionProvider } from './context/TransactionContext';
 import { AuthProvider } from './context/AuthContext';
 import LoginPage from './pages/LoginPage';
-import { useAuth } from './context/AuthContext';
-
-const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, loading } = useAuth();
-
-  if (loading) {
-    return <div>Loading...</div>;
-  }
-
-  if (!user) {
-    return <Navigate to="/login" />;
-  }
-
-  return <>{children}</>;
-};
 
 function App() {
   return (
@@ -36,41 +21,28 @@ function App() {
             <Route
               path="/"
               element={
-                <PrivateRoute>
-                  <AppLayout>
-                    <Dashboard />
-                  </AppLayout>
-                </PrivateRoute>
+                <AppLayout>
+                  <Dashboard />
+                </AppLayout>
               }
             />
             <Route
               path="/transactions"
               element={
-                <PrivateRoute>
-                  <AppLayout>
-                    <TransactionsPage />
-                  </AppLayout>
-                </PrivateRoute>
+                <AppLayout>
+                  <TransactionsPage />
+                </AppLayout>
               }
             />
             <Route
               path="/analytics"
               element={
-                <PrivateRoute>
-                  <AppLayout>
-                    <AnalyticsPage />
-                  </AppLayout>
-                </PrivateRoute>
+                <AppLayout>
+                  <AnalyticsPage />
+                </AppLayout>
               }
             />
-            <Route
-              path="/profile"
-              element={
-                <PrivateRoute>
-                  <ProfilePage />
-                </PrivateRoute>
-              }
-            />
+            <Route path="/profile" element={<ProfilePage />} />
           </Routes>
         </Router>
       </TransactionProvider>
